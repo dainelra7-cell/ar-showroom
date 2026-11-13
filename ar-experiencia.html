@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <!-- Viewport para celulares: evita zoom accidental al tocar -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0f1a">
+  <title>AR Showroom · Experiencia WebAR con A-Frame</title>
+
+  <!-- Paso 1: CDN oficial de A-Frame + aframe-extras -->
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/donmccurdy/aframe-extras@v7.2.0/dist/aframe-extras.min.js"></script>
+
+  <style>
+    :root {
+      --bg: #0b0f1a;
+      --panel: rgba(13, 18, 32, 0.88);
+      --borde: rgba(255, 255, 255, 0.12);
+      --texto: #e8ecf5;
+      --suave: #9aa3b8;
+      --acento: #ffcc00;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0; height: 100%; overflow: hidden;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg); color: var(--texto);
+    }
+    body.modo-ar { background: transparent; }
+
+    /* Video de la cámara trasera detrás del canvas (modo AR en celular) */
+    #video-camara {
+      position: fixed; inset: 0; width: 100vw; height: 100vh;
+      object-fit: cover; z-index: -1; display: none;
+    }
+    body.modo-ar #video-camara { display: block; }
+
+    /* ---------- Barra superior ---------- */
+    .barra {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: calc(10px + env(safe-area-inset-top)) 14px 10px;
+      background: linear-gradient(to bottom, rgba(11,15,26,.85), transparent);
+      pointer-events: none;
+    }
+    .barra h1 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: .3px; }
+    .barra h1 span { color: var(--acento); }
+    .barra button { pointer-events: auto; }
+
+    button {
+      font: inherit; cursor: pointer; border: 1px solid var(--borde);
+      background: rgba(255,255,255,.08); color: var(--texto);
+      border-radius: 10px; padding: 9px 12px; font-size: 13px;
+      min-height: 40px; /* área táctil cómoda */
+    }
+    button:active { transform: scale(.97); }
+    button.activo { background: var(--acento); color: #111; border-color: var(--acento); font-weight: 700; }
+
+    /* ---------- Panel flotante de controles 2D ---------- */
+    #panel {
+      position: fixed; z-index: 10; right: 14px; top: 70px; width: 290px;
+      max-height: calc(100vh - 90px); overflow-y: auto;
+      background: var(--panel); border: 1px solid var(--borde); border-radius: 16px;
+      padding: 14px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      transition: transform .25s ease;
+    }
+    #panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--suave); margin: 4px 0 10px; }
+    .grupo { margin-bottom: 14px; }
+    .grupo label { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px; }
+    .grupo label output { color: var(--acento); font-variant-numeric: tabular-nums; }
+    input[type="range"] { width: 100%; accent-color: var(--acento); height: 28px; }
+
+    .colores { display: flex; gap: 8px; flex-wrap: wrap; }
+    .color {
+      width: 38px; height: 38px; border-radius: 50%; padding: 0; min-height: 0;
+      border: 2px solid rgba(255,255,255,.25);
+    }
+    .color.seleccionado { border-color: #fff; box-shadow: 0 0 0 3px rgba(255,204,0,.6); }
+    input[type="color"] { width: 38px; height: 38px; border: none; background: none; padding: 0; border-radius: 50%; }
+
+    .fila { display: flex; gap: 8px; flex-wrap: wrap; }
+    .fila button { flex: 1; }
+
+    .metricas {
+      background: rgba(255,255,255,.05); border: 1px solid var(--borde);
+      border-radius: 12px; padding: 10px; font-size: 13px;
+    }
+    .metricas .kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+    .kpi b { display: block; font-size: 20px; color: var(--acento); }
+    .kpi small { color: var(--suave); }
+    #historial { list-style: none; margin: 0; padding: 0; max-height: 110px; overflow-y: auto; }
+    #historial li { display: flex; justify-content: space-between; gap: 6px; padding: 4px 0; border-top: 1px dashed var(--borde); color: var(--suave); font-size: 12px; }
+    #historial li i { width: 12px; height: 12px; border-radius: 50%; display: inline-block; flex: none; margin-top: 2px; }
+
+    .ayuda {
+      position: fixed; z-index: 9; left: 50%; bottom: 18px; transform: translateX(-50%);
+      background: rgba(0,0,0,.55); padding: 8px 14px; border-radius: 999px; font-size: 12px;
+      pointer-events: none; white-space: nowrap;
+    }
+
+    #toast {
+      position: fixed; z-index: 20; left: 50%; top: 80px; transform: translate(-50%, -20px);
+      background: var(--acento); color: #111; font-weight: 700; padding: 8px 14px; border-radius: 999px;
+      font-size: 13px; opacity: 0; transition: all .25s ease; pointer-events: none;
+    }
+    #toast.visible { opacity: 1; transform: translate(-50%, 0); }
+
+    #btn-panel { display: none; }
+
+    /* ---------- Celulares: el panel se vuelve una hoja inferior ---------- */
+    @media (max-width: 760px) {
+      #btn-panel { display: inline-block; }
+      #panel {
+        left: 0; right: 0; top: auto; bottom: 0; width: auto;
+        max-height: 55vh; border-radius: 18px 18px 0 0;
+        padding-bottom: calc(14px + env(safe-area-inset-bottom));
+      }
+      #panel.oculto { transform: translateY(calc(100% - 0px)); }
+      #panel::before {
+        content: ""; display: block; width: 40px; height: 4px; border-radius: 4px;
+        background: rgba(255,255,255,.3); margin: -4px auto 10px;
+      }
+      .ayuda { bottom: auto; top: calc(62px + env(safe-area-inset-top)); }
+      body.panel-abierto .ayuda { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Feed de cámara para el modo AR (se activa con el botón 📷) -->
+  <video id="video-camara" autoplay playsinline muted></video>
+
+  <header class="barra">
+    <h1>AR <span>Showroom</span></h1>
+    <div class="fila" style="flex:none">
+      <button id="btn-ar" title="Usar la cámara del teléfono como fondo">📷 Modo AR</button>
+      <button id="btn-panel">⚙️ Panel</button>
+    </div>
+  </header>
+
+  <div class="ayuda" id="ayuda">👆 Toca o haz clic en el producto</div>
+  <div id="toast"></div>
+
+  <!-- ================= PANEL FLOTANTE DE CONTROLES 2D ================= -->
+  <aside id="panel" aria-label="Controles del objeto 3D">
+    <h2>Personalizar producto</h2>
+
+    <div class="grupo">
+      <label>Color</label>
+      <div class="colores" id="paleta">
+        <button class="color" data-color="#FF2A2A" style="background:#FF2A2A" aria-label="Rojo"></button>
+        <button class="color" data-color="#2AFF6B" style="background:#2AFF6B" aria-label="Verde"></button>
+        <button class="color" data-color="#2A75FF" style="background:#2A75FF" aria-label="Azul"></button>
+        <button class="color" data-color="#FF2AEE" style="background:#FF2AEE" aria-label="Rosa"></button>
+        <button class="color" data-color="#FFCC00" style="background:#FFCC00" aria-label="Amarillo"></button>
+        <input type="color" id="color-libre" value="#ffffff" aria-label="Color personalizado">
+      </div>
+    </div>
+
+    <div class="grupo">
+      <label>Forma</label>
+      <div class="fila">
+        <button class="forma activo" data-forma="box">Caja</button>
+        <button class="forma" data-forma="sphere">Esfera</button>
+        <button class="forma" data-forma="cylinder">Cilindro</button>
+      </div>
+    </div>
+
+    <div class="grupo">
+      <label for="rng-escala">Escala <output id="out-escala">1.00</output></label>
+      <input type="range" id="rng-escala" min="0.4" max="1.8" step="0.05" value="1">
+    </div>
+
+    <div class="grupo">
+      <label for="rng-metal">Metalness <output id="out-metal">0.60</output></label>
+      <input type="range" id="rng-metal" min="0" max="1" step="0.05" value="0.6">
+    </div>
+
+    <div class="grupo">
+      <label for="rng-rugosidad">Roughness <output id="out-rugosidad">0.30</output></label>
+      <input type="range" id="rng-rugosidad" min="0" max="1" step="0.05" value="0.3">
+    </div>
+
+    <div class="grupo">
+      <label for="rng-distancia">Distancia (Z) <output id="out-distancia">-3.0 m</output></label>
+      <input type="range" id="rng-distancia" min="-4" max="-2" step="0.1" value="-3">
+    </div>
+
+    <div class="grupo">
+      <div class="fila">
+        <button id="btn-girar">🔄 Girar</button>
+        <button id="btn-auto">▶️ Auto-giro</button>
+        <button id="btn-reset">↺ Reset</button>
+      </div>
+    </div>
+
+    <h2>Métricas (LocalStorage)</h2>
+    <div class="metricas">
+      <div class="kpis">
+        <div class="kpi"><b id="kpi-clics">0</b><small>Toques al producto</small></div>
+        <div class="kpi"><b id="kpi-cambios">0</b><small>Cambios en panel</small></div>
+      </div>
+      <ul id="historial"></ul>
+    </div>
+    <div class="fila" style="margin-top:10px">
+      <button id="btn-borrar">🗑️ Borrar métricas</button>
+    </div>
+  </aside>
+
+  <!-- ======================= ESCENA A-FRAME ======================= -->
+  <!-- renderer alpha permite ver la cámara del teléfono detrás de la escena -->
+  <a-scene
+    id="escena"
+    renderer="alpha: true; antialias: true; colorManagement: true"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: true"
+    loading-screen="dotsColor: #ffcc00; backgroundColor: #0b0f1a">
+
+    <!-- Iluminación -->
+    <a-entity light="type: ambient; intensity: 0.6"></a-entity>
+    <a-entity light="type: directional; intensity: 0.9; castShadow: true" position="2 4 1"></a-entity>
+    <a-entity light="type: point; intensity: 0.6; color: #ffcc00" position="-2 2.5 -2"></a-entity>
+
+    <!-- Entorno (se oculta en Modo AR para ver el mundo real) -->
+    <a-entity id="entorno">
+      <a-sky color="#0b0f1a"></a-sky>
+      <a-circle rotation="-90 0 0" radius="12" color="#141a2b" shadow="receive: true"></a-circle>
+      <a-ring rotation="-90 0 0" position="0 0.01 -3" radius-inner="0.9" radius-outer="0.95" color="#ffcc00" opacity="0.5"></a-ring>
+    </a-entity>
+
+    <!-- Paso 2: Producto 3D en zona ergonómica (Z = -3 m, a la altura de los ojos) -->
+    <a-box
+      id="objeto-producto"
+      class="clickable"
+      position="0 1.2 -3"
+      rotation="0 45 0"
+      scale="1 1 1"
+      color="#FF2A2A"
+      material="roughness: 0.3; metalness: 0.6"
+      shadow="cast: true"
+      animation__flotar="property: object3D.position.y; from: 1.2; to: 1.3; dir: alternate; loop: true; dur: 1800; easing: easeInOutSine">
+    </a-box>
+
+    <!-- World-Space UI: etiqueta 3D sobre el producto -->
+    <a-text id="etiqueta" value="Toca el producto" align="center" color="#ffffff"
+            width="3" position="0 2.15 -3"></a-text>
+
+    <!-- Paso 3: Cámara a altura humana + cursor espacial (Raycaster) -->
+    <!-- rayOrigin: mouse => el rayo sale desde donde tocas/haces clic (funciona en celular) -->
+    <a-camera position="0 1.6 0"
+              look-controls="touchEnabled: true; magicWindowTrackingEnabled: true; pointerLockEnabled: false"
+              wasd-controls="enabled: false">
+      <a-cursor
+        id="cursor-raycast"
+        color="#FFCC00"
+        fuse="false"
+        cursor="rayOrigin: mouse; fuse: false"
+        raycaster="objects: .clickable; far: 20"
+        visible="false">
+        <!-- El anillo se oculta porque el rayo sigue al dedo/ratón, no al centro -->
+      </a-cursor>
+    </a-camera>
+  </a-scene>
+
+  <!-- Paso 4: lógica de interacción -->
+  <script src="js/ar-app.js"></script>
+</body>
+</html>
